@@ -197,4 +197,23 @@ function update_object_ids(blocks::Array{Block, 2}, block_id_map::Array{Int, 2},
     return new_block_id_map;
 end
 
+function unary_penalties(blocks, object_ids, motion_vecs, group_coords, prev_pixel_map, frame, old_frame; inf_val::Float64=1000.0, mult::Float64=1000.0)
+    unary_penalties = fill(inf_val, (length(blocks), size(group_coords, 1) + 1));
+    unary_penalties[:, end] = 0;
+
+    for (group_id, (obj_id, vecs, gc)) in enumerate(zip(object_ids, motion_vecs, group_coords))
+        for coords in gc
+            block_id = [coords[1] - 1, coords[2]]' * [size(blocks, 2), 1]
+            block = blocks[block_id];
+            img_diff = 1 - cor(frame[block.coords()..., :][:], old_frame[block.coords(-1 .* vecs)..., :][:])
+    #         img_diff = mean(abs.(frame[block.coords()..., :] .- old_frame[block.coords(-1 .* vecs)..., :]))
+            lab_diff = mean(prev_pixel_map[block.coords(-1 .* vecs)...] .!= obj_id)
+            unary_penalties[block_id, group_id] = img_diff + lab_diff
+            unary_penalties[block_id, end] = inf_val
+        end
+    end
+
+    return -round.(Int, mult .* unary_penalties);
+end
+
 end

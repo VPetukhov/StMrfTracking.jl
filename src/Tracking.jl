@@ -9,8 +9,9 @@ using PyCall
 disk = morphology.disk;
 
 Img2Type = Union{Array{UInt8,2}, Array{Float64,2}};
-Img3Type = Union{Array{UInt8,3}, Array{Float64,3}};
-ImgType = Union{Img2Type, Img3Type}
+# Img3Type = Union{Array{UInt8,3}, Array{Float64,3}};
+# ImgType = Union{Img2Type, Img3Type}
+Img3Type = Array{Float64,3};
 
 ImgArrType = Union{Array{Array{UInt8, 2}, 1}, Array{Array{Float64, 2}, 1}, 
                    Array{Array{UInt8, 3}, 1}, Array{Array{Float64, 3}, 1}};
@@ -45,17 +46,37 @@ function init_background_weighted(frames::ImgArrType; background_rate::Float64 =
     return background
 end
 
-function update_background(frame::ImgType, background::ImgType, foreground::BitArray, background_rate::Float64=0.95)
-    background = copy(background);
-    background_mask = repeat(.!foreground, outer=[1; 1; 3]);
-    background[background_mask] .= background_rate .* background[background_mask] .+ 
-        (1 - background_rate) .* frame[background_mask];
+function init_background(frames::ImgArrType; background_rate::Float64 = 0.95, max_iters::Int=3, threshold_values::Array{Float64, 1} = [0.2; 0.1; 0.05])
+    background = init_background_weighted(frames);
+
+    for thres in threshold_values[1:max_iters]
+        for (i, frame) in enumerate(frames)
+            foreground = subtract_background(frame, background, thres);
+            foreground = filters.median(foreground, disk(5)) .> 0
+            update_background!(background, frame, foreground, background_rate);
+        end
     
-    return background
+        for (i, frame) in enumerate(reverse(frames))
+            foreground = subtract_background(frame, background, thres);
+            foreground = filters.median(foreground, disk(5)) .> 0
+            update_background!(background, frame, foreground, background_rate);
+        end
+    end
+    
+    return background;
 end
 
-function subtract_background(image::ImgType, background::ImgType, threshold::Float64=0.1)
-#     return any(abs.(image .- background) .> threshold, 3)[:,:,1];
+function update_background!(background::Img3Type, frame::Img3Type, foreground::BitArray, background_rate::Float64=0.95)
+    background_mask = .!foreground
+    for i in 1:3
+        cur_background = view(background, :,:,i)
+        cur_frame = view(frame, :,:,i)
+        cur_background[background_mask] .= background_rate .* cur_background[background_mask] .+ 
+            (1 - background_rate) .* cur_frame[background_mask];
+    end
+end
+
+function subtract_background(image::Img3Type, background::Img3Type, threshold::Float64=0.1)
     return any(abs.(image .- background) .> threshold, 3)[:,:,1]
 end
 
