@@ -64,43 +64,8 @@ function get_block(blocks::Array{Block, 2}, x::Int, y::Int, block_width::Int, bl
     return blocks[get_block_coords(x, y, block_width, block_height)...]
 end
 
-function update_slit_objects!(slit_line::Array{Block, 1}, frame::Tracking.Img3Type, background::Tracking.Img3Type, 
+function update_slit_objects!(blocks::Array{Block, 2}, slit_coords, frame::Tracking.Img3Type, background::Tracking.Img3Type, 
                               new_block_id::Int; threshold::Float64=0.1)
-    new_block_id = copy(new_block_id) - 1;
-    has_new = false;
-    obj_ids = zeros(Int, size(slit_line, 1));
-    obj_ids_old = [b.object_id for b in slit_line];
-
-    for (id, block) in enumerate(slit_line)
-        if is_foreground(block, frame, background, threshold)
-            if !has_new
-                new_block_id += 1
-            end
-
-            obj_ids[id] = new_block_id
-            has_new = true
-        else
-            has_new = false
-        end
-    end
-    
-    for id in unique(obj_ids[obj_ids .> 0])
-        old_ids = unique(obj_ids_old[obj_ids .== id])
-        old_ids = old_ids[old_ids .> 0]
-        if size(old_ids, 1) > 0
-            obj_ids[obj_ids .== id] = old_ids[1]
-        end
-    end
-    
-    for (b, id) in zip(slit_line, obj_ids)
-        b.object_id = id
-    end
-    
-    return maximum(obj_ids) + 1
-end
-
-function update_slit_objects2!(blocks::Array{Block, 2}, slit_coords, frame::Tracking.Img3Type, background::Tracking.Img3Type, 
-                               new_block_id::Int; threshold::Float64=0.1)
     new_block_id = copy(new_block_id);
     obj_ids = zeros(Int, size(slit_coords, 1));
 
