@@ -2,8 +2,8 @@ module GcWrappers
 
 using GCoptimization
 
-function id_by_coords(row::Int, col::Int, width::Int; zero_based::Bool=true)
-    id = [row - 1, col]' * [width, 1]
+function id_by_coords(row::Int, col::Int, height::Int; zero_based::Bool=true)
+    id = [col - 1, row]' * [height, 1]
 
     if zero_based
         return id - 1
@@ -21,10 +21,10 @@ function gc_optimization_8_grid_graph(height::Int, width::Int, n_labels::Int)
 
     for row in 1:(height - 1)
         for col in 1:(width - 1)
-            setNeighbors(gco, id_by_coords(row, col, width), id_by_coords(row + 1, col, width))
-            setNeighbors(gco, id_by_coords(row, col, width), id_by_coords(row, col + 1, width))
-            setNeighbors(gco, id_by_coords(row, col, width), id_by_coords(row + 1, col + 1, width))
-            setNeighbors(gco, id_by_coords(row + 1, col, width), id_by_coords(row, col + 1, width))
+            setNeighbors(gco, id_by_coords(row, col, height), id_by_coords(row + 1, col, height))
+            setNeighbors(gco, id_by_coords(row, col, height), id_by_coords(row, col + 1, height))
+            setNeighbors(gco, id_by_coords(row, col, height), id_by_coords(row + 1, col + 1, height))
+            setNeighbors(gco, id_by_coords(row + 1, col, height), id_by_coords(row, col + 1, height))
         end
     end
     

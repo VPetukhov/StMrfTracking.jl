@@ -1,6 +1,12 @@
 module StMrf
 
 import Tracking
+import GCoptimization
+GCO = GCoptimization;
+
+import GcWrappers
+GW = GcWrappers;
+
 using PyCall
 
 @pyimport skimage.feature as feature
@@ -73,9 +79,14 @@ function update_slit_objects!(blocks::Array{Block, 2}, slit_coords, frame::Track
         if !is_foreground(blocks[coords...], frame, background, threshold)
             continue
         end
+
+        if blocks[coords...].object_id > 0
+            obj_ids[id] = blocks[coords...].object_id
+            continue
+        end
         
         next_id = 0;
-        for dc in zip(D_ROWS, D_COLS)
+        for dc in zip(D_ROWS[1:end-1], D_COLS[1:end-1])
             new_coords = coords .+ dc
             if any(new_coords .< 1) || any(new_coords .> size(blocks))
                 continue
@@ -214,6 +225,39 @@ function unary_penalties(blocks, object_ids, motion_vecs, group_coords, prev_pix
     end
 
     return -round.(Int, mult .* unary_penalties);
+end
+
+function set_block_ids!(blocks::Array{Block, 2}, id_map::Array{Int, 2})
+    if any(size(blocks) .!= size(id_map))
+        error("Dimensions don't match: $(size(blocks)), $(size(id_map))")
+    end
+
+    for (b, id) in zip(blocks, id_map)
+        b.object_id = id
+    end
+end
+
+function label_map_naive(object_map::Array{Set{Int64},2})::Array{Int, 2}
+    return map(ids -> length(ids) == 0 ? 0 : collect(ids)[1], object_map)
+end
+
+function label_map_gco(blocks::Array{Block, 2}, object_map::Array{Set{Int64},2}, motion_vecs::Array{Tuple{Int64,Int64},1}, 
+                       prev_pixel_map::Array{Int, 2}, frame::Tracking.Img3Type, prev_frame::Tracking.Img3Type)::Array{Int, 2}
+    if maximum(map(length, object_map)) < 2
+        return label_map_naive(object_map)
+    end
+
+    const object_ids = sort(collect(reduce(union, object_map)));
+    const group_coords = [collect(zip(findn(map(v -> lab in v, object_map))...)) for lab in object_ids];
+    const data_cost = unary_penalties(blocks, object_ids, motion_vecs, group_coords, prev_pixel_map, frame, prev_frame);
+
+    gco = GW.gc_optimization_8_grid_graph(size(blocks, 1), size(blocks, 2), size(data_cost, 2));
+    GW.set_data_cost(gco, -data_cost)
+    GCO.gco_setsmoothcost(gco, GW.smooth_cost_matrix(size(data_cost, 2), 1))
+    GCO.gco_expansion(gco)
+    
+    const labels = GCO.gco_getlabeling(gco);
+    return reshape(labels, size(blocks))'
 end
 
 end
