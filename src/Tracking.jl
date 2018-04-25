@@ -6,6 +6,7 @@ using PyCall
 @pyimport skimage.transform as transform
 @pyimport skimage.filters as filters
 @pyimport skimage.morphology as morphology
+@pyimport skimage.color as color
 disk = morphology.disk;
 
 Img2Type = Union{Array{UInt8,2}, Array{Float64,2}};
@@ -89,6 +90,18 @@ function plot_frame(frame, slit_x, slit_y, slit_width, block_height)
     PyPlot.imshow(frame)
     PyPlot.hlines(slit_y, xmin=slit_x, xmax=slit_x + slit_width)
     PyPlot.hlines(slit_y + block_height, xmin=slit_x, xmax=slit_x + slit_width);
+end
+
+function shadow_mask(frame, background; min_ratio::Float64=0.1, max_ratio::Float64=0.5, 
+                     min_s::Float64=0.05, min_h::Float64=0.5)::BitArray{2}
+    hsv_frame = color.rgb2hsv(frame);
+    hsv_backround = color.rgb2hsv(background);
+
+    h_mask = abs.(hsv_frame[:,:,1] .- hsv_backround[:,:,1]) .>= min_h;
+    s_mask = (hsv_frame[:,:,2] .- hsv_backround[:,:,2] .>= min_s);
+    v_mask = (min_ratio .<= (hsv_frame[:,:,3] ./ hsv_backround[:,:,3]) .<= max_ratio)
+
+    return h_mask .& s_mask .& v_mask
 end
 
 end

@@ -39,9 +39,17 @@ function set_data_cost(gco, costs::Array{Int, 2})
     end
 end
 
+function set_smooth_cost(gco, n::Int; penalty::Int=1)
+    gco_setsmoothcost(gco, smooth_cost_matrix(n, penalty))
+end
+
 function smooth_cost_matrix(n::Int, penalty::Int=1)
     mtx = ones(Int, n, n) .- diagm(ones(Int, n));
     return mtx .* penalty
+end
+
+function sigmoid(x::Float64, μ::Float64=0.0; scale::Float64=1.0)
+    return 1 / (1 + exp(scale .* (μ - x)))
 end
 
 end
