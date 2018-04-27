@@ -1,11 +1,10 @@
 module StMrf
 
-import Tracking
 import GCoptimization
 GCO = GCoptimization;
 
-import GcWrappers
-GW = GcWrappers;
+import VehicleTracker.Tracking
+import VehicleTracker.ImgBlock.Block
 
 using PyCall
 
@@ -14,60 +13,11 @@ using PyCall
 const D_ROWS = [0 1 1 1 0 -1 -1 -1 0]
 const D_COLS = [-1 -1 0 1 1 1 0 -1 0]
 
-type Block
-    start_x::Int;
-    start_y::Int;
-    end_x::Int;
-    end_y::Int;
-    object_id::Int;
-    x_inds::Function;
-    y_inds::Function;
-    coords::Function;
-    
-    function Block(start_x::Int, start_y::Int, width::Int, height::Int)
-        this = new(start_x, start_y, start_x + width, start_y + height, 0);
-        
-        this.x_inds = function() 
-            return this.start_x:this.end_x
-        end
-        
-        this.y_inds = function() 
-            return this.start_y:this.end_y
-        end
-        
-        this.coords = function(displacement::Union{Array{Int, 1}, Tuple{Int, Int}} = (0, 0)) 
-            return (this.y_inds() .+ displacement[1], this.x_inds() .+ displacement[2])
-        end
-        
-        return this
-    end
-end
-
-function blocks_to_object_map(blocks::Array{Block, 2})
-    end_x = blocks[1, end].end_x
-    end_y = blocks[end, 1].end_y
-    
-    frame = zeros(Int, end_y, end_x)
-    for block in blocks
-        frame[block.coords()...] = block.object_id
-    end
-    
-    return frame
-end
-
 function is_foreground(block::Block, frame::Tracking.Img3Type, background::Tracking.Img3Type, threshold::Float64)
     y_inds = block.start_y:block.end_y
     x_inds = block.start_x:block.end_x
     
     return mean(abs.(frame[y_inds, x_inds, :] - background[y_inds, x_inds, :])) > threshold
-end
-
-function get_block_coords(x::Int, y::Int, block_width::Int, block_height::Int)
-    return (floor(Int, y / block_height), floor(Int, x / block_width))
-end
-
-function get_block(blocks::Array{Block, 2}, x::Int, y::Int, block_width::Int, block_height::Int)
-    return blocks[get_block_coords(x, y, block_width, block_height)...]
 end
 
 function update_slit_objects!(blocks::Array{Block, 2}, slit_coords, frame::Tracking.Img3Type, background::Tracking.Img3Type, 
@@ -206,58 +156,6 @@ function update_object_ids(blocks::Array{Block, 2}, block_id_map::Array{Int, 2},
     end
 
     return new_block_id_map;
-end
-
-function unary_penalties(blocks, object_ids, motion_vecs, group_coords, prev_pixel_map, frame, old_frame; inf_val::Float64=1000.0, mult::Float64=1000.0)
-    unary_penalties = fill(inf_val, (length(blocks), size(group_coords, 1) + 1));
-    unary_penalties[:, end] = 0;
-
-    for (group_id, (obj_id, vecs, gc)) in enumerate(zip(object_ids, motion_vecs, group_coords))
-        for coords in gc
-            block_id = [coords[1] - 1, coords[2]]' * [size(blocks, 2), 1]
-            block = blocks[block_id];
-            img_diff = 1 - cor(frame[block.coords()..., :][:], old_frame[block.coords(-1 .* vecs)..., :][:])
-    #         img_diff = mean(abs.(frame[block.coords()..., :] .- old_frame[block.coords(-1 .* vecs)..., :]))
-            lab_diff = mean(prev_pixel_map[block.coords(-1 .* vecs)...] .!= obj_id)
-            unary_penalties[block_id, group_id] = img_diff + lab_diff
-            unary_penalties[block_id, end] = inf_val
-        end
-    end
-
-    return -round.(Int, mult .* unary_penalties);
-end
-
-function set_block_ids!(blocks::Array{Block, 2}, id_map::Array{Int, 2})
-    if any(size(blocks) .!= size(id_map))
-        error("Dimensions don't match: $(size(blocks)), $(size(id_map))")
-    end
-
-    for (b, id) in zip(blocks, id_map)
-        b.object_id = id
-    end
-end
-
-function label_map_naive(object_map::Array{Set{Int64},2})::Array{Int, 2}
-    return map(ids -> length(ids) == 0 ? 0 : collect(ids)[1], object_map)
-end
-
-function label_map_gco(blocks::Array{Block, 2}, object_map::Array{Set{Int64},2}, motion_vecs::Array{Tuple{Int64,Int64},1}, 
-                       prev_pixel_map::Array{Int, 2}, frame::Tracking.Img3Type, prev_frame::Tracking.Img3Type)::Array{Int, 2}
-    if maximum(map(length, object_map)) < 2
-        return label_map_naive(object_map)
-    end
-
-    const object_ids = sort(collect(reduce(union, object_map)));
-    const group_coords = [collect(zip(findn(map(v -> lab in v, object_map))...)) for lab in object_ids];
-    const data_cost = unary_penalties(blocks, object_ids, motion_vecs, group_coords, prev_pixel_map, frame, prev_frame);
-
-    gco = GW.gc_optimization_8_grid_graph(size(blocks, 1), size(blocks, 2), size(data_cost, 2));
-    GW.set_data_cost(gco, -data_cost)
-    GCO.gco_setsmoothcost(gco, GW.smooth_cost_matrix(size(data_cost, 2), 1))
-    GCO.gco_expansion(gco)
-    
-    const labels = GCO.gco_getlabeling(gco);
-    return reshape(labels, size(blocks))'
 end
 
 end

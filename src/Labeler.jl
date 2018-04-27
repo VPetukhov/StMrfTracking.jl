@@ -3,12 +3,11 @@ module Labeler
 import GCoptimization
 GCO = GCoptimization;
 
-import GcWrappers
+import VehicleTracker.GcWrappers
 GW = GcWrappers;
 
-import Tracking
-import StMrf
-SM = StMrf;
+import VehicleTracker.Tracking
+import VehicleTracker.ImgBlock.Block
 
 function unary_penalties(blocks, object_ids, motion_vecs, group_coords, prev_pixel_map, frame, prev_frame; inf_val::Float64=1000.0, mult::Float64=1000.0)
     unary_penalties = fill(inf_val, (length(blocks), size(group_coords, 1) + 1));
@@ -45,10 +44,14 @@ function unary_penalties(blocks, object_ids, motion_vecs, group_coords, prev_pix
     return -round.(Int, mult .* unary_penalties);
 end
 
-function label_map_gco(blocks::Array{SM.Block, 2}, object_map::Array{Set{Int64},2}, motion_vecs::Array{Tuple{Int64,Int64},1}, 
+function label_map_naive(object_map::Array{Set{Int64},2})::Array{Int, 2}
+    return map(ids -> length(ids) == 0 ? 0 : collect(ids)[1], object_map)
+end
+
+function label_map_gco(blocks::Array{Block, 2}, object_map::Array{Set{Int64},2}, motion_vecs::Array{Tuple{Int64,Int64},1}, 
                        prev_pixel_map::Array{Int, 2}, frame::Tracking.Img3Type, prev_frame::Tracking.Img3Type)::Array{Int, 2}
     if maximum(map(length, object_map)) < 2
-        return SM.label_map_naive(object_map)
+        return label_map_naive(object_map)
     end
 
     const object_ids = sort(collect(reduce(union, object_map)));

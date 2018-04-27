@@ -1,0 +1,7 @@
+julia 0.6
+
+GCoptimization
+Images 0.13.0
+StatsBase 0.21.0
+PyCall 1.15.0
+PyPlot 2.5.0
