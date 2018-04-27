@@ -1,0 +1,23 @@
+{
+    "slit": {
+        "x": 50,
+        "y": 400,
+        "width": 250,
+        "vehicle_direction": "up"
+    },
+
+    "blocks": {
+        "width": 10,
+        "height": 8
+    },
+
+    "video": {
+        "frame_step": 2,
+        "n_background_init_frames": 300,
+        "n_background_init_iters": 3
+    },
+
+    "algorithm": {
+        "background_diff_threshold": 0.05
+    }
+}

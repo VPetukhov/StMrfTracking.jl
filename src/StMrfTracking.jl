@@ -1,5 +1,7 @@
 module StMrfTracking
 
+using Cxx
+
 export GcWrappers
 export Labeler
 export StMrf

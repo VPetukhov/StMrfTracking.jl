@@ -95,7 +95,7 @@ function motion_vector_similarity_map(blocks::Array{Block, 2}, frame::Tracking.I
                                       old_frame::Tracking.Img3Type, coords::Tuple{Int, Int}; 
                                       search_rad::Int=1)::Array{Float64, 2}
     if any(coords .- search_rad .< 1) || any(coords .+ search_rad .> size(blocks))
-        res_size = (size(blocks[1].y_inds(), 1), size(blocks[1].x_inds(), 1)) .* 2 .* search_rad .- 1
+        res_size = (size(blocks[1].x_inds(), 1), size(blocks[1].y_inds(), 1)) .* 2 .* search_rad .- 1
         return zeros(res_size)
     end
     

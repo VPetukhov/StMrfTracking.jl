@@ -24,6 +24,23 @@ ImgArrType = Union{Array{Array{UInt8, 2}, 1}, Array{Array{Float64, 2}, 1},
 const D_ROWS = [0 1 1 1 0 -1 -1 -1]
 const D_COLS = [-1 -1 0 1 1 1 0 -1]
 
+function read_all_data(reader; frame_step::Int=1, max_frames::Int=-1)
+    if max_frames <= 0
+        max_frames = reader[:get_meta_data]()["nframes"]
+    end
+
+    frames = Array{Img3Type, 1}()
+    for i in 0:frame_step:(max_frames - 1)
+        try
+            push!(frames, preprocess_frame(reader[:get_data](i)))
+        catch
+            break
+        end
+    end
+
+    return frames
+end
+
 function edge_image(img::Img2Type; g_max::Float64 = 256.0, 
         α::Float64 = 80.0, β::Float64 = 0.02)
     res = zeros(size(img));
@@ -88,7 +105,7 @@ function subtract_background(image::Img3Type, background::Img3Type, threshold::F
     return any(abs.(image .- background) .> threshold, 3)[:,:,1]
 end
 
-function preprocess_frame(frame; shape::Array{Int, 1} = [480; 600], filt_radius::Int=2)
+function preprocess_frame(frame; shape::Array{Int, 1} = [480; 600], filt_radius::Int=2)::Img3Type
     img = transform.resize(frame, [480; 600]);
     if filt_radius == 0
         return img

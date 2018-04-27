@@ -1,37 +1,61 @@
+using ArgParse
+
+args = ArgParseSettings()
+@add_arg_table args begin
+    "--max-frames", "-m"
+        help = "maximal number of frames to process in the file"
+        arg_type = Int
+        default = -1
+    "--config", "-c"
+        help = "JSON file with config"
+        arg_type = String
+        required = true
+    "video_file"
+        help = "video file to process"
+        required = true
+end
+
+args = parse_args(args)
+
 println("Loading modules... ")
 
+import StMrfTracking
+
+using ProgressMeter
 using PyCall
 using PyPlot
+using Suppressor
 import Images
 
 @pyimport imageio
 
-using StMrfTracking
-T = Tracking;
-SM = StMrf;
-L = Labeler;
-B = ImgBlock;
+T = StMrfTracking.Tracking;
+SM = StMrfTracking.StMrf;
+L = StMrfTracking.Labeler;
+B = StMrfTracking.ImgBlock;
 
 println("Done.")
 
-### TODO: move to config and cli arguments
-const video_file = "/home/viktor/VirtualBox VMs/Shared/VehicleTracking/vehicle_videos/4K_p2.mp4"
-const frame_step = 2;
-const frames = [T.preprocess_frame(reader[:get_data](i)) for i in 0:frame_step:(n_frames-1)];
-const n_background_init_frames = 300
-const n_background_init_iters = 3
+# Parameters
+const video_file = args["video_file"]
+max_out_frames = args["max-frames"]
+config = JSON.parsefile(args["config"]);
 
-const slit_x = 50;
-const slit_y = 400;
-const slit_width = 250;
+const slit_x = config["slit"]["x"];
+const slit_y = config["slit"]["y"];
+const slit_width = config["slit"]["width"];
+const vehicle_direction = config["slit"]["vehicle_direction"];
 
-const block_width = 10;
-const block_height = 8;
+const frame_step = config["video"]["frame_step"];
+const n_background_init_frames = config["video"]["n_background_init_frames"];
+const n_background_init_iters = config["video"]["n_background_init_iters"];
 
-const threshold = 0.05;
-max_out_frames = -1
-###
+const block_width = config["blocks"]["width"];
+const block_height = config["blocks"]["height"];
 
+const threshold = config["algorithm"]["background_diff_threshold"];
+
+# Algorithm
 reader = imageio.get_reader(video_file);
 if max_out_frames <= 0
     max_out_frames = reader[:get_meta_data]()["nframes"]
@@ -39,7 +63,7 @@ end
 
 print("Start reading $video_file... ")
 
-frames = [T.preprocess_frame(reader[:get_data](i)) for i in 0:frame_step:(max_out_frames-1)];
+const frames = frames = T.read_all_data(reader; frame_step=frame_step, max_frames=max_out_frames);
 
 println("Done.")
 print("Background initialization... ")
@@ -58,32 +82,33 @@ writer = imageio.get_writer(out_video_file, fps=reader[:get_meta_data]()["fps"] 
 
 println("Start video processing...")
 new_object_id = 1;
-for f_id in 1:(size(frames, 1) - 1)
-    if f_id % 100 == 0
-        println("Total $f_id frames processed.")
-    end
-    
-    global frame = frames[f_id];
-    global prev_pixel_map = B.blocks_to_object_map(blocks);
+
+@showprogress 1 "Processing video..." for f_id in 1:(size(frames, 1) - 1)
+    frame = frames[f_id];
+    prev_pixel_map = B.blocks_to_object_map(blocks);
     SM.update_slit_objects!(blocks, slit_coords, frame, background, new_object_id; threshold=threshold);
     
-    global old_frame = frame;
+    old_frame = frame;
     frame = frames[f_id + 1];
 
     obj_ids_map = map(b -> b.object_id, blocks);
 
-    global object_ids = sort(unique(obj_ids_map));
+    object_ids = sort(unique(obj_ids_map));
     object_ids = object_ids[object_ids .> 0]
     group_coords = [collect(zip(findn(obj_ids_map .== id)...)) for id in object_ids]
-    global motion_vecs = [SM.find_motion_vector(blocks, frame, old_frame, gc) for gc in group_coords]
+    motion_vecs = [SM.find_motion_vector(blocks, frame, old_frame, gc) for gc in group_coords]
     
     labels = zeros(Int, size(blocks))
     if size(motion_vecs, 1) != 0
         motion_vecs_rounded = [SM.round_motion_vector(mv, block_width, block_height) for mv in motion_vecs]
-        global new_map = SM.update_object_ids(blocks, obj_ids_map, motion_vecs_rounded, group_coords, frame, background; 
+        new_map = SM.update_object_ids(blocks, obj_ids_map, motion_vecs_rounded, group_coords, frame, background; 
                                        threshold=threshold);
-#         new_map[map(x -> x.end_y, blocks) .< slit_y] = Set();
-        new_map[map(x -> x.end_y, blocks) .> slit_y + block_height] = Set();
+
+        if vehicle_direction == "up"
+            new_map[map(x -> x.end_y, blocks) .> slit_y + block_height] = Set();
+        else
+            new_map[map(x -> x.end_y, blocks) .< slit_y] = Set();
+        end
 
         labels = L.label_map_gco(blocks, new_map, motion_vecs, prev_pixel_map, frame, old_frame);
         labels = Images.label_components(labels, trues(3, 3))
