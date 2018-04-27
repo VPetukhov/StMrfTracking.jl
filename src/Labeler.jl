@@ -19,11 +19,25 @@ function unary_penalties(blocks, object_ids, motion_vecs, group_coords, prev_pix
             block_id = GW.id_by_coords(coords..., size(blocks, 1), zero_based=false)
 
             block = blocks[coords...];
-            img_diff = 1 - cor(frame[block.coords()..., :][:], prev_frame[block.coords(-1 .* vec)..., :][:])
-    #         img_diff = mean(abs.(frame[block.coords()..., :] .- prev_frame[block.coords(-1 .* vec)..., :]))
-            lab_diff = mean(prev_pixel_map[block.coords(-1 .* vec)...] .!= obj_id)
 
-            unary_penalties[block_id, group_id] = img_diff + lab_diff
+            cur_colors = frame[block.coords()..., :][:];
+            prev_coords = block.coords(-1 .* vec);
+            if any([prev_coords[1][end] prev_coords[2][end]] .> size(frame)) || any([prev_coords[1][1] prev_coords[2][1]] .< 0)
+                unary_penalties[block_id, group_id] = 0 # TODO: process this case more cleverly
+            else
+                prev_colors = prev_frame[prev_coords..., :][:]
+                img_diff = 1
+                if std(cur_colors) == 0 || std(prev_colors) == 0
+                    img_diff -= mean(abs.(cur_colors .- prev_colors))
+                else
+                    img_diff -= cor(cur_colors, prev_colors)
+                end
+
+                lab_diff = mean(prev_pixel_map[prev_coords...] .!= obj_id)
+
+                unary_penalties[block_id, group_id] = img_diff + lab_diff
+            end
+            
             unary_penalties[block_id, end] = inf_val
         end
     end

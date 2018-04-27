@@ -1,12 +1,16 @@
 module Tracking
 
+import Images
 import PyPlot
+import StatsBase
+
 using PyCall
 
 @pyimport skimage.transform as transform
 @pyimport skimage.filters as filters
 @pyimport skimage.morphology as morphology
 @pyimport skimage.color as color
+@pyimport matplotlib.patches as patch
 disk = morphology.disk;
 
 Img2Type = Union{Array{UInt8,2}, Array{Float64,2}};
@@ -16,6 +20,9 @@ Img3Type = Array{Float64,3};
 
 ImgArrType = Union{Array{Array{UInt8, 2}, 1}, Array{Array{Float64, 2}, 1}, 
                    Array{Array{UInt8, 3}, 1}, Array{Array{Float64, 3}, 1}};
+
+const D_ROWS = [0 1 1 1 0 -1 -1 -1]
+const D_COLS = [-1 -1 0 1 1 1 0 -1]
 
 function edge_image(img::Img2Type; g_max::Float64 = 256.0, 
         α::Float64 = 80.0, β::Float64 = 0.02)
@@ -83,25 +90,188 @@ end
 
 function preprocess_frame(frame; shape::Array{Int, 1} = [480; 600], filt_radius::Int=2)
     img = transform.resize(frame, [480; 600]);
+    if filt_radius == 0
+        return img
+    end
     return cat(3, [filters.median(img[:,:,i], disk(filt_radius)) for i in 1:3]...) ./ 255;
 end
 
-function plot_frame(frame, slit_x, slit_y, slit_width, block_height)
-    PyPlot.imshow(frame)
-    PyPlot.hlines(slit_y, xmin=slit_x, xmax=slit_x + slit_width)
-    PyPlot.hlines(slit_y + block_height, xmin=slit_x, xmax=slit_x + slit_width);
+function plot_frame(frame, slit_x, slit_y, slit_width, block_height; object_map=nothing, plot_mask=false, plot_boxes=false, ax=nothing)
+    if typeof(ax) == Void
+        ax = PyPlot.axes()
+    end
+    if typeof(object_map) != Void && plot_mask
+        frame = deepcopy(frame)
+        for obj_id in unique(object_map)
+            if obj_id == 0
+                continue
+            end
+        
+            srand(obj_id)
+        
+            mask = object_map .== obj_id;
+            view(frame, :, :, 1)[mask] .= rand()
+            view(frame, :, :, 2)[mask] .= rand()
+            view(frame, :, :, 3)[mask] .= rand()
+        end
+    end
+
+    ax[:imshow](frame)
+    ax[:hlines](slit_y, xmin=slit_x, xmax=slit_x + slit_width)
+    ax[:hlines](slit_y + block_height, xmin=slit_x, xmax=slit_x + slit_width);
+
+    if typeof(object_map) != Void && plot_boxes
+        b_boxes = Images.component_boxes(object_map)[2:end];
+        for coords in b_boxes
+            rect = patch.Rectangle(reverse(coords[1]), reverse(coords[2] .- coords[1])...)
+            rect[:set_facecolor]("none")
+            rect[:set_edgecolor]("red")
+            ax[:add_artist](rect);
+        end
+    end
 end
 
-function shadow_mask(frame, background; min_ratio::Float64=0.1, max_ratio::Float64=0.5, 
-                     min_s::Float64=0.05, min_h::Float64=0.5)::BitArray{2}
-    hsv_frame = color.rgb2hsv(frame);
-    hsv_backround = color.rgb2hsv(background);
+py"""
+import numpy as np
+def fig_to_array(fig):
+    fig.canvas.draw()
+    img = np.fromstring(fig.canvas.tostring_rgb(), dtype="uint8")
+    return img.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+"""
 
-    h_mask = abs.(hsv_frame[:,:,1] .- hsv_backround[:,:,1]) .>= min_h;
-    s_mask = (hsv_frame[:,:,2] .- hsv_backround[:,:,2] .>= min_s);
-    v_mask = (min_ratio .<= (hsv_frame[:,:,3] ./ hsv_backround[:,:,3]) .<= max_ratio)
+fig_to_array = py"fig_to_array";
 
-    return h_mask .& s_mask .& v_mask
+function plot_frame_to_array(frame, slit_x, slit_y, slit_width, block_height; object_map=nothing, plot_mask=false, plot_boxes=false)
+    fig = PyPlot.plt[:figure](figsize=size(frame)[[2, 1]] ./ 100, dpi=100)
+    ax = fig[:gca]()
+    plot_frame(frame, slit_x, slit_y, slit_width, block_height; object_map=object_map, plot_boxes=plot_boxes, plot_mask=plot_mask);
+    ax[:axis]("off")
+    fig[:subplots_adjust](left=0, bottom=0, top=1, right=1)
+    arr = fig_to_array(fig)
+    close(fig)
+    return arr
+end
+
+function _find_adjacent_foreground_ratio(shadow_labels, foreground)
+    const n_labels = maximum(shadow_labels)
+
+    border_per_label = zeros(Int, n_labels);
+    adj_foreground_per_label = zeros(Int, n_labels);
+
+    for row in 1:size(shadow_labels, 1)
+        for col in 1:size(shadow_labels, 2)
+            const cur_class = shadow_labels[row, col]
+            if cur_class == 0
+                continue
+            end
+
+            is_border = false
+            for (dr, dc) in zip(D_ROWS, D_COLS)
+                row_n = row + dr
+                col_n = col + dc
+                if row_n < 1 || col_n < 1 || row_n > size(shadow_labels, 1) || col_n > size(shadow_labels, 2)
+                    continue
+                end
+                
+                if shadow_labels[row_n, col_n] == cur_class
+                    continue
+                end
+                
+                if !is_border
+                    is_border = true
+                    border_per_label[cur_class] += 1
+                end
+                
+                if foreground[row_n, col_n] && shadow_labels[row_n, col_n] == 0
+                    adj_foreground_per_label[cur_class] += 1
+                    break
+                end
+            end
+        end
+    end
+
+    return adj_foreground_per_label ./ border_per_label
+end
+
+function segment_shadows(frame, shadow_mask; edge_threshold::Float64=0.05)
+    shadow_mask = deepcopy(shadow_mask)
+
+    edges = filters.sobel(mean(frame, 3)[:,:,1]) .> edge_threshold;
+    edges[.!shadow_mask] = false
+    shadow_mask[edges] = false;
+    shadow_labels = Images.label_components(shadow_mask);
+    next_label = maximum(shadow_labels) + 1;
+
+    for coords in zip(findn(edges)...)
+        adj_classes = Dict{Int, Int}()
+        for dc in zip(D_ROWS, D_COLS)
+            coords_n = coords .+ dc
+            if any(coords_n .< 1) || any(coords_n .> size(shadow_labels))
+                continue
+            end
+            
+            const cur_label = shadow_labels[coords_n...];
+            if cur_label == 0
+                continue
+            end
+            
+            adj_classes[cur_label] = get(adj_classes, cur_label, 0) + 1
+        end
+        
+        if length(adj_classes) == 0
+            shadow_labels[coords...] = next_label
+            next_label += 1
+        else
+            shadow_labels[coords...] = collect(keys(adj_classes))[findmax(values(adj_classes))[2]]
+        end
+    end
+
+    return shadow_labels
+end
+
+function suppress_shadows(foreground, frame, background; z_threshold::Number=1.0, adj_threshold::Float64=0.5, size_threshold::Number=0.5, 
+                          shadow_diff_threshold::Float64=0.2)
+    foreground = deepcopy(foreground)
+    frame_ratio = (frame + 1 / 256) ./ (background + 1 / 256);
+    foreground_ratio_pixels = hcat([frame_ratio[:,:,i][foreground] for i in 1:3]...);
+
+    std_est = mapslices(p -> StatsBase.mad(p; normalize=true), foreground_ratio_pixels, 1);
+    ratio_score = (foreground_ratio_pixels .- median(foreground_ratio_pixels, 1)) ./ std_est
+    shadow_mask_flatten = all(abs.(ratio_score) .< z_threshold, 2);
+
+    comp_diffs = [foreground_ratio_pixels[:,i] .- foreground_ratio_pixels[:,j] for (i,j) in [(1,2), (2, 3), (1, 3)]];
+    shadow_mask_flatten .&= (maximum(abs.(hcat(comp_diffs...)), 2) .< shadow_diff_threshold);
+
+    shadow_mask = falses(size(frame)[1:2]);
+    shadow_mask[foreground] .= vec(shadow_mask_flatten);
+
+    fg_labels = Images.label_components(foreground .& .!shadow_mask) .+ 1;
+    pixels_per_fg_label = zeros(Int, maximum(fg_labels));
+    for lab in fg_labels
+        pixels_per_fg_label[lab] += 1
+    end
+
+    size_border = (size_threshold * mean(pixels_per_fg_label[2:end]) + std(pixels_per_fg_label[2:end]))
+    false_fg_mask = (pixels_per_fg_label .< size_border)[fg_labels]
+    foreground[false_fg_mask] = false
+
+    shadow_mask = filters.median(shadow_mask, disk(3)) .> 0;
+
+    return foreground, shadow_mask
+
+    for i in 1:20
+        prev_mask = shadow_mask
+        shadow_labels = segment_shadows(frame, shadow_mask);
+        adj_foreground_ratio = _find_adjacent_foreground_ratio(shadow_labels, foreground)
+        shadow_mask = vcat(false, adj_foreground_ratio .< adj_threshold)[shadow_labels .+ 1];
+        if all(shadow_mask .== prev_mask)
+            break
+        end
+    end
+    
+    foreground = filters.median(foreground .& .!shadow_mask, disk(5)) .> 0;
+    
+    return foreground
 end
 
 end
