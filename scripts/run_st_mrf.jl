@@ -6,7 +6,7 @@ import Images
 
 @pyimport imageio
 
-using VehicleTracker
+using StMrfTracking
 T = Tracking;
 SM = StMrf;
 L = Labeler;

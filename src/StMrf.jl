@@ -3,8 +3,8 @@ module StMrf
 import GCoptimization
 GCO = GCoptimization;
 
-import VehicleTracker.Tracking
-import VehicleTracker.ImgBlock.Block
+import StMrfTracking.Tracking
+import StMrfTracking.ImgBlock.Block
 
 using PyCall
 

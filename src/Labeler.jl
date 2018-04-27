@@ -3,11 +3,11 @@ module Labeler
 import GCoptimization
 GCO = GCoptimization;
 
-import VehicleTracker.GcWrappers
+import StMrfTracking.GcWrappers
 GW = GcWrappers;
 
-import VehicleTracker.Tracking
-import VehicleTracker.ImgBlock.Block
+import StMrfTracking.Tracking
+import StMrfTracking.ImgBlock.Block
 
 function unary_penalties(blocks, object_ids, motion_vecs, group_coords, prev_pixel_map, frame, prev_frame; inf_val::Float64=1000.0, mult::Float64=1000.0)
     unary_penalties = fill(inf_val, (length(blocks), size(group_coords, 1) + 1));
