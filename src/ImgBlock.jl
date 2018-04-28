@@ -3,17 +3,17 @@ module ImgBlock
 export Block, blocks_to_object_map, set_block_ids!, init_field
 
 mutable struct Block
-    start_x::Int;
     start_y::Int;
-    end_x::Int;
+    start_x::Int;
     end_y::Int;
+    end_x::Int;
     object_id::Int;
     x_inds::Function;
     y_inds::Function;
     coords::Function;
     
-    function Block(start_x::Int, start_y::Int, width::Int, height::Int)
-        this = new(start_x, start_y, start_x + width, start_y + height, 0);
+    function Block(start_y::Int, start_x::Int, height::Int, width::Int)
+        this = new(start_y, start_x, start_y + height - 1, start_x + width - 1, 0);
         
         this.x_inds = function() 
             return this.start_x:this.end_x
@@ -58,12 +58,12 @@ function get_block_coords(y::Int, x::Int, block_height::Int, block_width::Int)
 end
 
 function init_field(field_size::Union{Array{Int, 1}, Tuple{Int, Int}}, block_size::Union{Array{Int, 1}, Tuple{Int, Int}})
-    blocks = Array{Block, 2}(floor.(Int, field_size ./ block_size) .- 1)
+    blocks = Array{Block, 2}(floor.(Int, field_size ./ block_size))
     for row_id in 1:size(blocks, 1)
-        const row_start = row_id * block_size[1];
+        const row_start = (row_id - 1) * block_size[1] + 1;
         for col_id in 1:size(blocks, 2)
-            const col_start = col_id * block_size[2];
-            blocks[row_id, col_id] = Block(col_start, row_start, block_size...);
+            const col_start = (col_id - 1) * block_size[2] + 1;
+            blocks[row_id, col_id] = Block(row_start, col_start, block_size...);
         end
     end
 

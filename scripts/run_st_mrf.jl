@@ -10,6 +10,12 @@ args = ArgParseSettings()
         help = "JSON file with config"
         arg_type = String
         required = true
+    "--suppress-shadows", "-s"
+        help = "Suppress shadows"
+        action = :store_true
+    "--quite", "-q"
+        help = "Don't show calibration image"
+        action = :store_true
     "video_file"
         help = "video file to process"
         required = true
@@ -24,7 +30,6 @@ import StMrfTracking
 using ProgressMeter
 using PyCall
 using PyPlot
-using Suppressor
 import Images
 
 @pyimport imageio
@@ -40,6 +45,8 @@ println("Done.")
 const video_file = args["video_file"]
 max_out_frames = args["max-frames"]
 config = JSON.parsefile(args["config"]);
+const suppress_shadows = args["suppress-shadows"]
+const quite = args["quite"]
 
 const slit_x = config["slit"]["x"];
 const slit_y = config["slit"]["y"];
@@ -61,6 +68,11 @@ if max_out_frames <= 0
     max_out_frames = reader[:get_meta_data]()["nframes"]
 end
 
+if !quite
+    T.plot_frame(T.preprocess_frame(reader[:get_data](0)), slit_x, slit_y, slit_width, block_height)
+    PyPlot.show()
+end
+
 print("Start reading $video_file... ")
 
 const frames = frames = T.read_all_data(reader; frame_step=frame_step, max_frames=max_out_frames);
@@ -77,7 +89,8 @@ blocks = B.init_field(size(background)[1:2], (block_height, block_width))
 slit_coords = [B.get_block_coords(slit_y, slit_x + i * block_width, block_height, block_width) for i in 1:floor(Int, slit_width / block_width)]
 slit_line = [blocks[c...] for c in slit_coords];
 
-out_video_file = join(splitext(video_file), ".out");
+const out_suffix = suppress_shadows ? ".out_sh" :  ".out";
+out_video_file = join(splitext(video_file), out_suffix);
 writer = imageio.get_writer(out_video_file, fps=reader[:get_meta_data]()["fps"] / frame_step);
 
 println("Start video processing...")
@@ -101,8 +114,12 @@ new_object_id = 1;
     labels = zeros(Int, size(blocks))
     if size(motion_vecs, 1) != 0
         motion_vecs_rounded = [SM.round_motion_vector(mv, block_width, block_height) for mv in motion_vecs]
-        new_map = SM.update_object_ids(blocks, obj_ids_map, motion_vecs_rounded, group_coords, frame, background; 
-                                       threshold=threshold);
+        foreground = T.subtract_background(frame, background, threshold)
+
+        if suppress_shadows
+            foreground = T.suppress_shadows(foreground, frame, background)
+        end
+        new_map = SM.update_object_ids(blocks, obj_ids_map, motion_vecs_rounded, group_coords, foreground);
 
         if vehicle_direction == "up"
             new_map[map(x -> x.end_y, blocks) .> slit_y + block_height] = Set();
@@ -113,7 +130,6 @@ new_object_id = 1;
         labels = L.label_map_gco(blocks, new_map, motion_vecs, prev_pixel_map, frame, old_frame);
         labels = Images.label_components(labels, trues(3, 3))
     end
-
     
     new_object_id = maximum(labels) + 1
     B.set_block_ids!(blocks, labels)

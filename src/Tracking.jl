@@ -4,6 +4,7 @@ import Images
 import PyPlot
 import StatsBase
 
+using ProgressMeter
 using PyCall
 
 @pyimport skimage.transform as transform
@@ -30,7 +31,7 @@ function read_all_data(reader; frame_step::Int=1, max_frames::Int=-1)
     end
 
     frames = Array{Img3Type, 1}()
-    for i in 0:frame_step:(max_frames - 1)
+    @showprogress 1 "Reading data..." for i in 0:frame_step:(max_frames - 1)
         try
             push!(frames, preprocess_frame(reader[:get_data](i)))
         catch
@@ -74,7 +75,7 @@ end
 function init_background(frames::ImgArrType; background_rate::Float64 = 0.95, max_iters::Int=3, threshold_values::Array{Float64, 1} = [0.2; 0.1; 0.05])
     background = init_background_weighted(frames);
 
-    for thres in threshold_values[1:max_iters]
+    @showprogress 1 "Background initialization..." for thres in threshold_values[1:max_iters]
         for (i, frame) in enumerate(frames)
             foreground = subtract_background(frame, background, thres);
             foreground = filters.median(foreground, disk(5)) .> 0
@@ -287,7 +288,7 @@ function estimate_shadow_mask(foreground, frame, ratio_score, z_threshold, adj_t
     return shadow_mask
 end
 
-function suppress_shadows(foreground, frame, background; z_threshold::Number=1.0, adj_threshold::Float64=0.5, min_adj_threshold::Float64=0.1,
+function suppress_shadows(foreground, frame, background; z_threshold::Number=1.5, adj_threshold::Float64=0.3, min_adj_threshold::Float64=0.1,
                           size_threshold::Number=0.5, shadow_diff_threshold::Float64=0.2, high_foreground_threshold::Float64=0.2)
     shadow_foreground = subtract_background(frame, background, high_foreground_threshold)
     ratio_score = estimate_ratio_score(foreground, shadow_foreground, frame, background)
@@ -299,7 +300,7 @@ function suppress_shadows(foreground, frame, background; z_threshold::Number=1.0
     ratio_score = estimate_ratio_score(foreground, shadow_foreground, frame, background)
     shadow_mask = estimate_shadow_mask(foreground, frame, ratio_score, z_threshold, adj_threshold, min_adj_threshold, size_threshold)
 
-    foreground = filters.median(foreground .& .!shadow_mask, disk(5)) .> 0;
+    foreground = filters.median(foreground .& .!shadow_mask, disk(3)) .> 0;
 
     return foreground
 end

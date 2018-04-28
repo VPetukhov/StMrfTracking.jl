@@ -99,7 +99,7 @@ function motion_vector_similarity_map(blocks::Array{Block, 2}, frame::Tracking.I
                                       old_frame::Tracking.Img3Type, coords::Tuple{Int, Int}; 
                                       search_rad::Int=1)::Array{Float64, 2}
     if any(coords .- search_rad .< 1) || any(coords .+ search_rad .> size(blocks))
-        res_size = (size(blocks[1].x_inds(), 1), size(blocks[1].y_inds(), 1)) .* 2 .* search_rad .- 1
+        res_size = (size(blocks[1].y_inds(), 1), size(blocks[1].x_inds(), 1)) .* 2 .* search_rad .+ 1
         return zeros(res_size)
     end
     
@@ -127,15 +127,14 @@ end
 
 function update_object_ids(blocks::Array{Block, 2}, block_id_map::Array{Int, 2}, 
                            motion_vecs::Union{Array{Tuple{Int, Int}, 1}, Array{Array{Int, 1}, 1}}, 
-                           group_coords::Array{Array{Tuple{Int64,Int64},1},1}, frame::Tracking.Img3Type, 
-                           background::Tracking.Img3Type; threshold::Float64=0.2)::Array{Set{Int}, 2}
+                           group_coords::Array{Array{Tuple{Int64,Int64},1},1}, foreground::BitArray{2})::Array{Set{Int}, 2}
     new_block_id_map::Array{Set{Int}, 2} = hcat([[Set{Int}() for _ in 1:size(block_id_map, 1)] for _ in 1:size(block_id_map, 2)]...)
 
     for (gc, m_vec) in zip(group_coords, motion_vecs)
         for coords in gc
             const new_coords = max.(min.(coords .+ m_vec, size(blocks)), [1, 1])
 
-            if !is_foreground(blocks[new_coords...], frame, background, threshold)
+            if !is_foreground(blocks[new_coords...], foreground)
                 continue
             end
 
@@ -152,7 +151,7 @@ function update_object_ids(blocks::Array{Block, 2}, block_id_map::Array{Int, 2},
                     continue
                 end
 
-                if is_foreground(blocks[cur_coords...], frame, background, threshold)
+                if is_foreground(blocks[cur_coords...], foreground)
                     push!(new_block_id_map[cur_coords...], cur_block_id)
                 end
             end

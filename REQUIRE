@@ -6,6 +6,5 @@ StatsBase 0.21.0
 ProgressMeter
 PyCall 1.15.0
 PyPlot 2.5.0
-Suppressor
 ArgParse
 JSON
