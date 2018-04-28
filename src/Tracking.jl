@@ -21,8 +21,8 @@ Img3Type = Array{Float64,3};
 ImgArrType = Union{Array{Array{UInt8, 2}, 1}, Array{Array{Float64, 2}, 1}, 
                    Array{Array{UInt8, 3}, 1}, Array{Array{Float64, 3}, 1}};
 
-const D_ROWS = [0 1 1 1 0 -1 -1 -1]
-const D_COLS = [-1 -1 0 1 1 1 0 -1]
+const D_ROWS = [ 0  1 1 1 0 -1 -1 -1]
+const D_COLS = [-1 -1 0 1 1  1  0 -1]
 
 function read_all_data(reader; frame_step::Int=1, max_frames::Int=-1)
     if max_frames <= 0
@@ -174,6 +174,7 @@ function _find_adjacent_foreground_ratio(shadow_labels, foreground)
 
     border_per_label = zeros(Int, n_labels);
     adj_foreground_per_label = zeros(Int, n_labels);
+    pixels_per_class = zeros(Int, n_labels);
 
     for row in 1:size(shadow_labels, 1)
         for col in 1:size(shadow_labels, 2)
@@ -182,6 +183,7 @@ function _find_adjacent_foreground_ratio(shadow_labels, foreground)
                 continue
             end
 
+            pixels_per_class[cur_class] += 1;
             is_border = false
             for (dr, dc) in zip(D_ROWS, D_COLS)
                 row_n = row + dr
@@ -199,7 +201,7 @@ function _find_adjacent_foreground_ratio(shadow_labels, foreground)
                     border_per_label[cur_class] += 1
                 end
                 
-                if foreground[row_n, col_n] && shadow_labels[row_n, col_n] == 0
+                if foreground[row_n, col_n] && (shadow_labels[row_n, col_n] == 0)
                     adj_foreground_per_label[cur_class] += 1
                     break
                 end
@@ -207,7 +209,7 @@ function _find_adjacent_foreground_ratio(shadow_labels, foreground)
         end
     end
 
-    return adj_foreground_per_label ./ border_per_label
+    return adj_foreground_per_label ./ border_per_label, pixels_per_class
 end
 
 function segment_shadows(frame, shadow_mask; edge_threshold::Float64=0.05)
@@ -246,19 +248,20 @@ function segment_shadows(frame, shadow_mask; edge_threshold::Float64=0.05)
     return shadow_labels
 end
 
-function suppress_shadows(foreground, frame, background; z_threshold::Number=1.0, adj_threshold::Float64=0.5, size_threshold::Number=0.5, 
-                          shadow_diff_threshold::Float64=0.2)
-    foreground = deepcopy(foreground)
+function estimate_ratio_score(foreground, shadow_foreground, frame, background)
     frame_ratio = (frame + 1 / 256) ./ (background + 1 / 256);
-    foreground_ratio_pixels = hcat([frame_ratio[:,:,i][foreground] for i in 1:3]...);
+    ratio_pixels_shadow = hcat([frame_ratio[:,:,i][shadow_foreground] for i in 1:3]...);
+    ratio_pixels = hcat([frame_ratio[:,:,i][foreground] for i in 1:3]...);
 
-    std_est = mapslices(p -> StatsBase.mad(p; normalize=true), foreground_ratio_pixels, 1);
-    ratio_score = (foreground_ratio_pixels .- median(foreground_ratio_pixels, 1)) ./ std_est
+    const mean_est = median(ratio_pixels_shadow, 1);
+    const std_est = mapslices(p -> StatsBase.mad(p; normalize=true), ratio_pixels, 1);
+
+    return (ratio_pixels .- mean_est) ./ std_est
+end
+
+function estimate_shadow_mask(foreground, frame, ratio_score, z_threshold, adj_threshold, min_adj_threshold, size_threshold)
+    foreground = deepcopy(foreground)
     shadow_mask_flatten = all(abs.(ratio_score) .< z_threshold, 2);
-
-    comp_diffs = [foreground_ratio_pixels[:,i] .- foreground_ratio_pixels[:,j] for (i,j) in [(1,2), (2, 3), (1, 3)]];
-    shadow_mask_flatten .&= (maximum(abs.(hcat(comp_diffs...)), 2) .< shadow_diff_threshold);
-
     shadow_mask = falses(size(frame)[1:2]);
     shadow_mask[foreground] .= vec(shadow_mask_flatten);
 
@@ -273,21 +276,31 @@ function suppress_shadows(foreground, frame, background; z_threshold::Number=1.0
     foreground[false_fg_mask] = false
 
     shadow_mask = filters.median(shadow_mask, disk(3)) .> 0;
+    foreground = filters.median(foreground, disk(3)) .> 0;
 
-    return foreground, shadow_mask
+    shadow_labels = segment_shadows(frame, shadow_mask);
+    adj_foreground_ratio, pixels_per_bg_label = _find_adjacent_foreground_ratio(shadow_labels, foreground)
 
-    for i in 1:20
-        prev_mask = shadow_mask
-        shadow_labels = segment_shadows(frame, shadow_mask);
-        adj_foreground_ratio = _find_adjacent_foreground_ratio(shadow_labels, foreground)
-        shadow_mask = vcat(false, adj_foreground_ratio .< adj_threshold)[shadow_labels .+ 1];
-        if all(shadow_mask .== prev_mask)
-            break
-        end
-    end
-    
+    is_shadow = (adj_foreground_ratio .< adj_threshold);
+    is_shadow .&= (pixels_per_bg_label .< size_border) .| (adj_foreground_ratio .> min_adj_threshold)
+    shadow_mask = vcat(false, is_shadow)[shadow_labels .+ 1];
+    return shadow_mask
+end
+
+function suppress_shadows(foreground, frame, background; z_threshold::Number=1.0, adj_threshold::Float64=0.5, min_adj_threshold::Float64=0.1,
+                          size_threshold::Number=0.5, shadow_diff_threshold::Float64=0.2, high_foreground_threshold::Float64=0.2)
+    shadow_foreground = subtract_background(frame, background, high_foreground_threshold)
+    ratio_score = estimate_ratio_score(foreground, shadow_foreground, frame, background)
+    # ratio_score = estimate_ratio_score(foreground, foreground, frame, background)
+    shadow_mask = estimate_shadow_mask(foreground, frame, ratio_score, z_threshold, adj_threshold, min_adj_threshold, size_threshold)
+
+    shadow_foreground .&= shadow_mask
+
+    ratio_score = estimate_ratio_score(foreground, shadow_foreground, frame, background)
+    shadow_mask = estimate_shadow_mask(foreground, frame, ratio_score, z_threshold, adj_threshold, min_adj_threshold, size_threshold)
+
     foreground = filters.median(foreground .& .!shadow_mask, disk(5)) .> 0;
-    
+
     return foreground
 end
 

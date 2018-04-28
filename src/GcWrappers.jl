@@ -52,4 +52,15 @@ function sigmoid(x::Float64, μ::Float64=0.0; scale::Float64=1.0)
     return 1 / (1 + exp(scale .* (μ - x)))
 end
 
+
+function adj_smooth_cost(frame, coords1, coords2)
+    return prob_to_score(1. - maximum(abs.(frame[coords1...,:] .- frame[coords2...,:])), mult=100)
+end
+
+function set_w_neighbors(gco, frame, coords1, coords2, height)
+    const id1 = id_by_coords(coords1..., height)
+    const id2 = id_by_coords(coords2..., height)
+    setNeighbors(gco, id1, id2, adj_smooth_cost(frame, coords1, coords2))
+end
+
 end

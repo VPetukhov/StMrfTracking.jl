@@ -20,6 +20,10 @@ function is_foreground(block::Block, frame::Tracking.Img3Type, background::Track
     return mean(abs.(frame[y_inds, x_inds, :] - background[y_inds, x_inds, :])) > threshold
 end
 
+function is_foreground(block::Block, foreground::BitArray{2})
+    return mean(foreground[block.coords()...]) > 0.5
+end
+
 function update_slit_objects!(blocks::Array{Block, 2}, slit_coords, frame::Tracking.Img3Type, background::Tracking.Img3Type, 
                               new_block_id::Int; threshold::Float64=0.1)
     new_block_id = copy(new_block_id);
